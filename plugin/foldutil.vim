@@ -1,12 +1,14 @@
 " foldutil.vim -- utilities for creating folds.
-" Author: Hari Krishna <hari_vim at yahoo dot com>
-" Last Change: 12-Jun-2003 @ 13:19
+" Author: Hari Krishna Dara (hari_vim at yahoo dot com)
+" Last Change: 12-Jan-2004 @ 19:18
 " Created:     30-Nov-2001
 " Requires: Vim-6.0
-" Version: 1.4.0
+" Version: 1.5.2
 " Acknowledgements:
-"   Tom Regner {tomteat tomsdiner dot org}: Enhanced to work even when
+"   Tom Regner {tomte at tomsdiner dot org}: Enhanced to work even when
 "     foldmethod is not 'manual'.
+"   John A. Peters {japeters at pacbell dot net} for giving feedback and
+"     giving the idea of supporting a "-1" context.
 " Licence: This program is free software; you can redistribute it and/or
 "          modify it under the terms of the GNU General Public License.
 "          See http://www.gnu.org/copyleft/gpl.txt 
@@ -41,7 +43,28 @@
 "           50,500FoldShowLines 10,50,100 3
 "   
 "       The defaults for pattern and context are current search pattern
-"         (extracted from / register) and 0 (for no context) respectively.
+"         (extracted from / register) and 0 (for no context) respectively. A
+"         value of -1 for context is treated specially because:
+"	    - it creates folds with the matched lines as the starting line.
+"	    - it sets 'foldminlines' to 0 to show all the folds as closed.
+"	    - it sets 'foldtext' to display only the matched line for the fold
+"	      (no "number of lines" or dashes as prefix). This allows you to
+"	      view the matched lines more clearly and also follow the same
+"	      indentation as the original (nice when folding code). You can
+"	      however set g:foldutilFoldText to any value that is acceptable
+"	      for 'foldtext' and customize this behavior (e.g., to view the
+"	      number of lines in addition to the matched line, set it to
+"	      something like:
+"	      "getline(v:foldstart).' <'.(v:foldend-v:foldstart+1).' lines>'").
+"
+"	Ex: 
+"	  - Open a vim script and try: 
+"	      FoldNonMatching \<function\> -1
+"	  - Open a java class and try: 
+"	      FoldNonMatching public\|private\|protected -1
+"
+"	  Please send me other uses that you found for the "-1" context and I
+"	  will add it to the above list.
 "
 "   You can change the default for context by setting g:foldutilDefContext.
 "   The plugin by default, first clears the existing folds before creating the
@@ -55,12 +78,11 @@
 "
 " Summary Of Features:
 "   Command Line:
-"     FoldNonMatching, FoldShowLines, FoldEndFolding
+"     FoldNonMatching (or FoldShowMatching), FoldShowLines, FoldEndFolding
 "
 "   Settings:
-"       g:foldutilDefContext, g:foldutilClearFolds
+"       g:foldutilDefContext, g:foldutilClearFolds, g:foldutilFoldText
 " TODO:
-"
 
 if exists("loaded_foldutil")
   finish
@@ -78,7 +100,13 @@ if ! exists("g:foldutilClearFolds")
   let g:foldutilClearFolds = 1
 endif
 
+" 'foldtext' to be used for '-1' context case.
+if ! exists("g:foldutilFoldText")
+  let g:foldutilFoldText = 'getline(v:foldstart)'
+endif
+
 command! -range=% -nargs=* FoldNonMatching <line1>,<line2>:call <SID>FoldNonMatchingIF(<f-args>)
+command! -range=% -nargs=* FoldShowMatching <line1>,<line2>FoldNonMatching <args>
 command! -range=% -nargs=+ FoldShowLines <line1>,<line2>:call <SID>FoldShowLines(<f-args>)
 command! FoldEndFolding :call <SID>EndFolding()
 
@@ -146,10 +174,18 @@ function! s:FoldNonMatching(fline, lline, pattern, context)
   "    since this will look awkward to the user, it is adjusted here.
   "    Adding 1 below incidently takes care of the case when a non-numeric is
   "    passed
-  let context = a:context + 1
+  let context = a:context
+  let zeroContext = 0
   " If there is no context provided, use *no context*.
-  if a:context < 0
-    let context = 1
+  if context < 0
+    let context = 0
+    let zeroContext = 1
+    call s:SaveSetting('foldminlines')
+    setl foldminlines=0
+    call s:SaveSetting('foldtext')
+    let &l:foldtext=g:foldutilFoldText
+  else
+    let context = context + 1
   endif
 
   if g:foldutilClearFolds
@@ -168,21 +204,23 @@ function! s:FoldNonMatching(fline, lline, pattern, context)
     let line2 = search(pattern, "bW")
     exec line1
     if line2 > 0 && line1 != line2 && (line1 - line2) < context
-      let line1 = line2 + context
+      let line1 = line2 + (context < 1 ? 1 : context)
       " Let us try again, as we may still be within the context.
       continue
     endif
 
-    if match(getline('.'), pattern) != -1
+    if match(getline('.'), pattern) != -1 && ! zeroContext
       let line2 = line('.')
     else
+      +
+      normal 0
       let line2 = search(pattern, "W")
     endif
     " No more hits.
     if line2 <= 0
       if matchFound
         " Adjust for the last line. Increment because we decrement below.
-        let line2 = a:lline + context
+        let line2 = a:lline + (context < 1 ? 1 : context)
       else
         " No folds to create.
         break
@@ -193,10 +231,13 @@ function! s:FoldNonMatching(fline, lline, pattern, context)
     if line2 != line1 && (line2 - line1) > context
       " Create a new fold.
       "call input("creating fold: line1 = " . line1 . " line2: " . (line2 - context) . ":")
-      exec line1 "," (line2 - context) "fold"
+      if zeroContext
+	let line2 = line2 - 1
+      endif
+      exec line1.",".(line2 - context)."fold"
       let foldCount = foldCount + 1
     endif
-    let line1 = line2 + context
+    let line1 = line2 + (context < 1 ? 1 : context)
     exec line1
   endwhile
   redraw | echo "Folds created: " . foldCount
@@ -205,18 +246,26 @@ endfunction
 
 " utility-functions
 
+function! s:SaveSetting(setting)
+  exec 'let curVal = &l:'.a:setting
+  let w:settStr = 'let &l:'.a:setting."='".curVal."'\n" . w:settStr
+endfunction
+
+function! s:RestoreSettings()
+  exec w:settStr
+endfunction
+
 function! s:BeginFolding()
-  if !exists("b:fdmOrig")
-    let b:fdmOrig = &foldmethod
+  if !exists('w:settStr')
+    let w:settStr = ''
+    call s:SaveSetting('foldmethod')
     setl foldmethod=manual
   endif
 endfunction
 
 function! s:EndFolding()
-  if exists("b:fdmOrig")
-    let &foldmethod = b:fdmOrig
-    unlet b:fdmOrig
-  endif
+  call s:RestoreSettings()
+  unlet w:settStr
 endfunction
 
 " vim6:fdm=marker
