@@ -1,9 +1,9 @@
 " foldutil.vim -- utilities for creating folds.
 " Author: Hari Krishna Dara (hari_vim at yahoo dot com)
-" Last Change: 12-Jul-2004 @ 19:33
+" Last Change: 23-Sep-2004 @ 14:16
 " Created:     30-Nov-2001
 " Requires: Vim-6.2, multvals.vim(3.5)
-" Version: 1.6.0
+" Version: 1.7.0
 " Acknowledgements:
 "   Tom Regner {tomte at tomsdiner dot org}: Enhanced to work even when
 "     foldmethod is not 'manual'.
@@ -72,6 +72,16 @@
 "   You can change the default for context by setting g:foldutilDefContext.
 "
 "   You can change the context by using :FoldSetContext command.
+"   
+"     FoldShowRange - All the lines are folded except for the lines in the range
+"                     given. Helps to search only in a range of lines, as it is
+"                     easy to identify when the cursor goes out of the range.
+"                     Use FoldEndFolding to restore the original fold state.
+"         Syntax:
+"           [range]FoldShowRange
+"   
+"         Ex:
+"           50,500FoldShowRange
 "
 "   The plugin by default, first clears the existing folds before creating the
 "     new folds. But you can change this by setting g:foldutilClearFolds to 0,
@@ -132,9 +142,15 @@ if ! exists("g:foldutilFoldText")
   let g:foldutilFoldText = 'getline(v:foldstart)'
 endif
 
-command! -range=% -nargs=* FoldNonMatching <line1>,<line2>:call <SID>FoldNonMatchingIF(<f-args>)
-command! -range=% -nargs=* FoldShowMatching <line1>,<line2>FoldNonMatching <args>
-command! -range=% -nargs=+ FoldShowLines <line1>,<line2>:call <SID>FoldShowLines(<f-args>)
+command! -range=% -nargs=* FoldNonMatching
+      \ :<line1>,<line2>call <SID>FoldNonMatchingIF(<f-args>)
+" An alias for FoldNonMatching
+command! -range=% -nargs=* FoldShowMatching
+      \ :<line1>,<line2>FoldNonMatching <args>
+command! -range=% -nargs=+ FoldShowLines
+      \ :<line1>,<line2>call <SID>FoldShowLines(<f-args>)
+command! -range=% FoldShowRange :<line1>,<line2>call <SID>FoldShowRange()
+
 command! -nargs=1 FoldSetContext :call <SID>FoldSetContext(<f-args>)
 command! FoldEndFolding :call <SID>EndFolding()
 
@@ -273,9 +289,24 @@ function! s:FoldNonMatching(fline, lline, pattern, context)
   redraw | echo "Folds created: " . foldCount
 endfunction
 
-function s:FoldSetContext(newCntxt)
+function! s:FoldSetContext(newCntxt)
   if exists('w:settStr')
     call s:FoldNonMatching(s:fline, s:lline, s:pattern, a:newCntxt)
+  endif
+endfunction
+
+function! s:FoldShowRange() range
+  if a:firstline == 1 && a:lastline == line('$')
+    return
+  endif
+  call s:BeginFolding()
+  call s:SaveSetting('foldopen')
+  set foldopen-=search
+  if a:firstline != 1
+    exec '1,'.a:firstline.'-1 fold'
+  endif
+  if a:lastline != line('$')
+    exec a:lastline.'+1,$ fold'
   endif
 endfunction
 
