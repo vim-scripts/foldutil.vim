@@ -1,20 +1,29 @@
 " foldutil.vim -- utilities for creating folds.
 " Author: Hari Krishna <hari_vim at yahoo dot com>
-" Last Change: 11-Jun-2003 @ 17:52
+" Last Change: 12-Jun-2003 @ 13:19
 " Created:     30-Nov-2001
 " Requires: Vim-6.0
-" Version: 1.3.0
+" Version: 1.4.0
+" Acknowledgements:
+"   Tom Regner {tomteat tomsdiner dot org}: Enhanced to work even when
+"     foldmethod is not 'manual'.
 " Licence: This program is free software; you can redistribute it and/or
 "          modify it under the terms of the GNU General Public License.
 "          See http://www.gnu.org/copyleft/gpl.txt 
 " Download From:
 "     http://www.vim.org/script.php?script_id=158
 " Description:
-"   Defines useful commands for the ease of creating folds.
+"   Defines useful commands for the ease of creating folds. When the commands
+"     are executed, if the current 'foldmethod' is not "manual", the current
+"     value is saved in a buffer local variable and it is set to "manual" to
+"     be able to create the folds. When you want to restore the original
+"     'foldmethod', just execute the :FoldEndFolding command or set it to any
+"     value that you wish. For help on working with folds, see help on
+"     |folding|.
 "   
 "     FoldNonMatching - Pass an optional pattern and the number of context lines
-"                       to be shown. Useful to see only the matching lines.
-"                       You can give a range too.
+"                       to be shown. Useful to see only the matching lines
+"                       with or without context. You can give a range too.
 "         Syntax:
 "           [range]FoldNonMatching [pattern] [context]
 " 
@@ -23,7 +32,7 @@
 "   
 "     FoldShowLines - Pass a comma separated list of line numbers and an
 "                     optional number of context lines to be shown. All the
-"                     rest of the lines (excluding those in context) will
+"                     rest of the lines (excluding those in context) will be
 "                     folded away. You can give a range too.
 "         Syntax:
 "           [range]FoldShowLines {lines} [context]
@@ -34,12 +43,22 @@
 "       The defaults for pattern and context are current search pattern
 "         (extracted from / register) and 0 (for no context) respectively.
 "
+"   You can change the default for context by setting g:foldutilDefContext.
+"   The plugin by default, first clears the existing folds before creating the
+"     new folds. But you can change this by setting g:foldutilClearFolds to 0,
+"     in which case the new folds are added to the existing folds, so you can
+"     create folds incrementally.
+"
+"   NOTE: The plugin doesn't use FUInitialize command to change the settings
+"     any more, so when you need to change a setting, just change the
+"     corresponding global variable.
+"
 " Summary Of Features:
 "   Command Line:
-"     FoldNonMatching, FoldShowLines, FUInitialize
+"     FoldNonMatching, FoldShowLines, FoldEndFolding
 "
 "   Settings:
-"       foldutilDefContext, foldutilClearFolds
+"       g:foldutilDefContext, g:foldutilClearFolds
 " TODO:
 "
 
@@ -48,37 +67,26 @@ if exists("loaded_foldutil")
 endif
 let loaded_foldutil=1
 
-function! s:Initialize() " {{{
+" Initializations {{{
 
-if exists("g:foldutilDefContext")
-  let s:defContext = g:foldutilDefContext
-  unlet g:foldutilDefContext
-elseif !exists("s:defContext")
-  let s:defContext = 1
+if ! exists("g:foldutilDefContext")
+  let g:foldutilDefContext = 1
 endif
 
-if exists("g:foldutilClearFolds")
-  let s:clearFolds = g:foldutilClearFolds
-  unlet g:foldutilClearFolds
-elseif !exists("s:clearFolds")
+if ! exists("g:foldutilClearFolds")
   " First eliminate all the existing folds, by default.
-  let s:clearFolds = 1
+  let g:foldutilClearFolds = 1
 endif
 
 command! -range=% -nargs=* FoldNonMatching <line1>,<line2>:call <SID>FoldNonMatchingIF(<f-args>)
 command! -range=% -nargs=+ FoldShowLines <line1>,<line2>:call <SID>FoldShowLines(<f-args>)
+command! FoldEndFolding :call <SID>EndFolding()
 
-command! -nargs=0 FUInitialize :call <SID>Initialize()
-
-endfunction " s:Initialize }}}
-call s:Initialize()
+" Initializations }}}
 
 " Interface method for the ease of defining a simpler command interface.
 function! s:FoldNonMatchingIF(...) range
-  if &foldmethod != "manual"
-    echohl Error | echo "foldmethod is not manual" | echohl None
-    return
-  endif
+  call s:BeginFolding()
   if a:0 > 2
     echohl Error | echo "Too many arguments" | echohl None
     return
@@ -98,17 +106,14 @@ function! s:FoldNonMatchingIF(...) range
   if exists("a:2") && a:2 != ""
     let context = a:2
   else
-    let context = s:defContext
+    let context = g:foldutilDefContext
   endif
 
   call s:FoldNonMatching(a:firstline, a:lastline, pattern, context)
 endfunction
 
 function! s:FoldShowLines(lines, ...) range
-  if &foldmethod != "manual"
-    echohl Error | echo "foldmethod is not manual" | echohl None
-    return
-  endif
+  call s:BeginFolding()
   if a:0 > 2
     echohl Error | echo "Too many arguments" | echohl None
     return
@@ -117,7 +122,7 @@ function! s:FoldShowLines(lines, ...) range
   if exists("a:1") && a:1 != ""
     let context = a:1
   else
-    let context = s:defContext
+    let context = g:foldutilDefContext
   endif
 
   if match(a:lines, ',$') == -1
@@ -147,7 +152,7 @@ function! s:FoldNonMatching(fline, lline, pattern, context)
     let context = 1
   endif
 
-  if s:clearFolds
+  if g:foldutilClearFolds
     " First eliminate all the existing folds.
     normal zE
   endif
@@ -195,6 +200,23 @@ function! s:FoldNonMatching(fline, lline, pattern, context)
     exec line1
   endwhile
   redraw | echo "Folds created: " . foldCount
+endfunction
+
+
+" utility-functions
+
+function! s:BeginFolding()
+  if !exists("b:fdmOrig")
+    let b:fdmOrig = &foldmethod
+    setl foldmethod=manual
+  endif
+endfunction
+
+function! s:EndFolding()
+  if exists("b:fdmOrig")
+    let &foldmethod = b:fdmOrig
+    unlet b:fdmOrig
+  endif
 endfunction
 
 " vim6:fdm=marker
