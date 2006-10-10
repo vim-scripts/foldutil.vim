@@ -1,9 +1,9 @@
 " foldutil.vim -- utilities for creating folds.
 " Author: Hari Krishna Dara (hari_vim at yahoo dot com)
-" Last Change: 13-May-2005 @ 17:33
+" Last Change: 10-Oct-2006 @ 11:42
 " Created:     30-Nov-2001
-" Requires: Vim-6.2, multvals.vim(3.5), genutils.vim(1.18)
-" Version: 2.0.12
+" Requires: Vim-7.0, genutils.vim(2.0)
+" Version: 3.0.0
 " Acknowledgements:
 "   Tom Regner (tomte at tomsdiner dot org): Enhanced to work even when
 "     foldmethod is not 'manual'.
@@ -223,23 +223,20 @@ if exists("loaded_foldutil")
   finish
 endif
 
-if !exists('loaded_multvals')
-  runtime plugin/multvals.vim
-endif
-if !exists('loaded_multvals') || loaded_multvals < 305
-  echomsg 'foldutil: You need a newer version of multvals.vim plugin'
+if v:version < 700
+  echomsg 'foldutil: You need at least Vim 7.0'
   finish
 endif
 
 if !exists('loaded_genutils')
   runtime plugin/genutils.vim
 endif
-if !exists('loaded_genutils') || loaded_genutils < 118
+if !exists('loaded_genutils') || loaded_genutils < 200
   echomsg 'foldutil: You need a newer version of genutils.vim plugin'
   finish
 endif
 
-let loaded_foldutil=106
+let loaded_foldutil=400
 
 " Make sure line-continuations won't cause any problem. This will be restored
 "   at the end
@@ -287,15 +284,6 @@ command! -range FoldShowRange
 
 command! -nargs=1 FoldSetContext :call <SID>FoldSetContext(<f-args>)
 command! FoldEndFolding :call <SID>EndFolding()
-
-function! s:MyScriptId()
-  map <SID>xx <SID>xx
-  let s:sid = maparg("<SID>xx")
-  unmap <SID>xx
-  return substitute(s:sid, "xx$", "", "")
-endfunction
-let s:myScriptId = s:MyScriptId()
-delfunction s:MyScriptId
 
 " Initializations }}}
 
@@ -421,7 +409,7 @@ function! s:FoldSetContext(newCntxt) " {{{
 endfunction " }}}
 
 function! s:CreateFoldsInLoop() " {{{
-  call SaveHardPosition('FoldUtil')
+  call genutils#SaveHardPosition('FoldUtil')
   if g:foldutilClearFolds
     " First eliminate all the existing folds.
     normal zE
@@ -495,7 +483,7 @@ function! s:CreateFoldsInLoop() " {{{
     endtry
   endwhile
   redraw | echo "Folds created: " . foldCount
-  call RestoreHardPosition('FoldUtil')
+  call genutils#RestoreHardPosition('FoldUtil')
 endfunction
 
 function! s:CreateFold(st, en)
@@ -513,7 +501,7 @@ function! FoldCreateFoldsStr(fline, lline) " {{{
   let foldLevel = 0
   let prevFoldLevel = 0
   " We need a stack of start lines, as we need to take care of the nesting.
-  let foldStLines = ''
+  let foldStLines = []
   let line = (a:fline > 0) ? a:fline : 1
   let lline = (a:lline == '$' || a:lline > line('$')) ? line('$') : a:lline
   while line <= lline
@@ -522,12 +510,12 @@ function! FoldCreateFoldsStr(fline, lline) " {{{
     "   new fold, so start the fold.
     if foldLevel > prevFoldLevel
       " Push this line.
-      let foldStLines = MvAddElement(foldStLines, ',', line)
+      call add(foldStLines, line)
     elseif foldLevel < prevFoldLevel
-      let stLine = MvLastElement(foldStLines, ',')
+      let stLine = foldStLines[-1] " Last element.
       " Strictly speaking, this is not possible.
       if stLine != ''
-        let foldStLines = MvRemoveElement(foldStLines, ',', stLine)
+        call remove(foldStLines, len(foldStLines)-1)
         let crFoldStr = crFoldStr . stLine.','.(line-1)."fold\n"
       endif
     endif
@@ -536,14 +524,12 @@ function! FoldCreateFoldsStr(fline, lline) " {{{
   endwhile
   " Close all the unclosed folds (possible because of the restricted range).
   let stLine = 0
-  while MvNumberOfElements(foldStLines, ',') != 0 && stLine != ''
-    let stLine = MvLastElement(foldStLines, ',')
+  for stLine in reverse(foldStLines)
     " Strictly speaking, this is not possible.
     if stLine != ''
-      call MvRemoveElement(foldStLines, ',', stLine)
       let crFoldStr = crFoldStr . stLine.','.(line-1)."fold\n"
     endif
-  endwhile
+  endfor
   return crFoldStr
 endfunction " }}}
 
@@ -568,29 +554,21 @@ function! s:SearchForPattern(pat, negate)
   return line
 endfunction
 
+let s:curLinesPattern = ''
+let s:curLines = []
 function! s:PositionAtNextLine(lines, negate)
-  " This is not optimal.
-  "let lastLine = line('$')
-  "let foundNextLine = 0
-  "let i = line('.')
-  "while !foundNextLine && i <= lastLine
-  "  let foundNextLine = MvContainsElement(a:lines, ',', i)
-  "  if a:negate
-  "    let foundNextLine = !foundNextLine
-  "  endif
-  "  let i = i + 1
-  "endwhile
-  "if foundNextLine
-  "  let i = i - 1
-  "  exec i
-  "  return i
-  "else
-  "  return 0
-  "endif
+  if s:curLinesPattern ==# a:lines
+    let lines = s:curLines
+  else
+    let lines = sort(split(a:lines, ','), 'genutils#CmpByNumber')
+    let s:curLines = lines
+    let s:curLinesPattern = a:lines
+  endif
+
   if a:negate
     let lastLine = line('$')
     let i = line('.')
-    while i <= lastLine && MvContainsElement(a:lines, ',', i)
+    while i <= lastLine && index(lines, i) != -1
       let i = i + 1
     endwhile
     if i > lastLine
@@ -600,11 +578,13 @@ function! s:PositionAtNextLine(lines, negate)
       return i
     endif
   else
-    let nextLine = MvNumSearchNext(a:lines, ',', line('.'), 1)
-    if nextLine > line('.')
-      exec nextLine
-      return nextLine
-    endif
+    let curLine = line('.')
+    for nextLine in lines
+      if nextLine > curLine
+        exec nextLine
+        return nextLine
+      endif
+    endfor
   endif
   return 0
 endfunction
@@ -671,23 +651,20 @@ function! s:SaveSetting(setting)
     return
   endif
   if !exists('b:fuOrgSettings')
-    let b:fuOrgSettings = ''
+    let b:fuOrgSettings = []
   endif
   "let b:fuOrg{a:setting} = &l:{a:setting}
   exec 'let b:fuOrg{a:setting} = &l:'.a:setting
-  let b:fuOrgSettings = MvAddElement(b:fuOrgSettings, ',', a:setting)
+  call add(b:fuOrgSettings, a:setting)
 endfunction
 
 function! s:RestoreSettings()
-  call MvIterCreate(b:fuOrgSettings, ',', 'FoldUtil')
-  while MvIterHasNext('FoldUtil')
-    let nextSett = MvIterNext('FoldUtil')
+  for nextSett in b:fuOrgSettings
     "let &l:{nextSett} = b:fuOrg{nextSett}
     exec 'let &l:'.nextSett.' = b:fuOrg{nextSett}'
     unlet b:fuOrg{nextSett}
-  endwhile
+  endfor
   unlet b:fuOrgSettings
-  call MvIterDestroy('FoldUtil')
 endfunction
 
 function! s:BeginFolding()
